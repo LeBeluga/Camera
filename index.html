@@ -1,0 +1,969 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Caméra parlante</title>
+<style>
+:root { --bg:#ffffff; --fg:#141414; --muted:#5b5b5b; --card:#f2f2ef; --accent:#1a63c7; --ok:#16794a; --err:#b3261e; --border:#d6d6d0; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#111111; --fg:#f2f2f2; --muted:#a8a8a8; --card:#1e1e1e; --accent:#6aa8ff; --ok:#44d08a; --err:#ff7a6e; --border:#3a3a3a; }
+}
+* { box-sizing: border-box; }
+body { margin:0; padding:16px 16px 40px; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size:18px; line-height:1.45; background:var(--bg); color:var(--fg); }
+h1 { font-size:26px; margin:4px 0 14px; }
+h2 { font-size:20px; margin:0 0 8px; }
+section { background:var(--card); border-radius:16px; padding:14px; margin-bottom:14px; }
+button { display:block; width:100%; font-size:19px; font-weight:600; padding:15px 14px; margin:8px 0; border-radius:14px; border:none; background:var(--accent); color:#fff; }
+@media (prefers-color-scheme: dark) { button { color:#0b1a30; } }
+button.secondary { background:transparent; color:var(--accent); border:2px solid var(--accent); }
+button:disabled { opacity:.4; }
+.row { display:flex; gap:10px; }
+.row button { flex:1; font-size:26px; padding:12px 6px; }
+.status { font-weight:600; margin:4px 0; }
+.ok { color:var(--ok); } .err { color:var(--err); }
+.muted { color:var(--muted); font-size:15px; margin:4px 0; }
+textarea, input[type=password], input[type=text], select { width:100%; font-size:17px; padding:10px; border-radius:10px; border:1px solid var(--border); background:var(--bg); color:var(--fg); font-family:inherit; }
+textarea { min-height:72px; }
+label { display:block; margin:14px 0 6px; font-weight:600; }
+label.check { display:flex; gap:10px; align-items:center; font-weight:400; }
+label.check input { width:24px; height:24px; }
+input[type=range] { width:100%; }
+progress { width:100%; height:14px; }
+img.photo { width:100%; border-radius:12px; margin:8px 0; }
+.part { display:block; width:100%; text-align:left; font-weight:400; font-size:18px; color:var(--fg); background:var(--bg); border:2px solid var(--border); border-radius:12px; padding:10px 12px; margin:8px 0; }
+.part.current { border-color:var(--accent); }
+.part strong { display:block; color:var(--accent); margin-bottom:2px; }
+.lib { display:flex; gap:12px; align-items:center; width:100%; text-align:left; font-weight:400; font-size:16px; color:var(--fg); background:transparent; border:none; border-bottom:1px solid var(--border); border-radius:0; padding:10px 0; margin:0; }
+.lib img, .lib .noimg { width:68px; height:51px; object-fit:cover; border-radius:8px; flex:none; background:var(--border); }
+.lib span { overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; }
+details summary { font-size:20px; font-weight:600; padding:4px 0; }
+pre#log { white-space:pre-wrap; font-size:12px; max-height:260px; overflow:auto; }
+</style>
+</head>
+<body>
+<h1>Caméra parlante</h1>
+
+<section aria-labelledby="t-cam">
+  <h2 id="t-cam">Caméra</h2>
+  <p id="bleStatus" class="status" role="status" aria-live="polite">Pas connectée</p>
+  <progress id="progress" max="1" value="0" hidden aria-label="Réception de la photo"></progress>
+  <p id="bleInfo" class="muted"></p>
+  <button id="btnConnect">Se connecter à la caméra</button>
+  <button id="btnPhone" class="secondary">Photo avec l'iPhone (secours)</button>
+  <input id="phonePhoto" type="file" accept="image/*" capture="environment" hidden>
+</section>
+
+<section aria-labelledby="t-ans">
+  <h2 id="t-ans">Réponse</h2>
+  <p id="analysis" class="status" role="status" aria-live="polite"></p>
+  <button id="btnRetry" class="secondary" hidden>Réessayer</button>
+  <div id="answer"><p class="muted">Aucune réponse pour l'instant. Appuie sur le bouton de la caméra pour prendre une photo.</p></div>
+  <div class="row">
+    <button id="btnPrev" aria-label="Précédent">⏮</button>
+    <button id="btnPlay" aria-label="Lecture ou pause">⏯</button>
+    <button id="btnNext" aria-label="Suivant">⏭</button>
+  </div>
+</section>
+
+<section aria-labelledby="t-q">
+  <h2 id="t-q">Ta demande à Claude</h2>
+  <textarea id="question" aria-labelledby="t-q" placeholder="Vide : Claude lit ou décrit l'essentiel. Exemple : « Lis-moi tout le texte, mot pour mot »"></textarea>
+  <p id="memInfo" class="muted"></p>
+  <button id="btnForget" class="secondary">Oublier les photos précédentes</button>
+</section>
+
+<section aria-labelledby="t-lib">
+  <h2 id="t-lib">Bibliothèque</h2>
+  <div id="library"><p class="muted">Les réponses apparaîtront ici, de la plus récente à la plus ancienne.</p></div>
+</section>
+
+<section>
+  <details id="settings">
+    <summary>Réglages</summary>
+    <label for="apiKey">Clé API Claude</label>
+    <input id="apiKey" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-ant-…">
+    <p class="muted">Elle reste seulement sur ce téléphone.</p>
+    <button id="btnTest" class="secondary">Tester Claude</button>
+    <p id="testResult" class="muted" role="status" aria-live="polite"></p>
+
+    <label for="model">Modèle</label>
+    <select id="model">
+      <option value="claude-sonnet-5-5">Sonnet 5.5 (conseillé)</option>
+      <option value="claude-haiku-5-5">Haiku 5.5 (le plus rapide)</option>
+      <option value="claude-opus-5-5">Opus 5.5 (le plus précis, plus lent)</option>
+    </select>
+
+    <label for="rate">Vitesse de la voix</label>
+    <input id="rate" type="range" min="0.6" max="1.6" step="0.1" value="1">
+    <button id="btnVoice" class="secondary">Écouter la voix</button>
+
+    <label for="memMax">Photos précédentes envoyées pour le contexte</label>
+    <select id="memMax">
+      <option value="0">Aucune</option><option value="1">1</option><option value="2">2</option>
+      <option value="3">3</option><option value="4">4</option><option value="6">6</option>
+    </select>
+
+    <label class="check"><input id="announce" type="checkbox"> Dire « Photo reçue » à chaque photo</label>
+
+    <label for="instructions">Consignes générales envoyées à Claude</label>
+    <textarea id="instructions" rows="12"></textarea>
+    <button id="btnResetInstr" class="secondary">Remettre les consignes d'origine</button>
+  </details>
+</section>
+
+<section>
+  <details>
+    <summary>Journal (pour dépanner)</summary>
+    <pre id="log"></pre>
+  </details>
+</section>
+
+<script>
+'use strict';
+
+// ======================= Fonctions de base (testées à part) =======================
+// PURE-START
+const SERVICE = 'a3c87500-8ed3-4bdf-8a39-a01bebede295';
+const PHOTO   = 'a3c87501-8ed3-4bdf-8a39-a01bebede295';
+const CTRL    = 'a3c87502-8ed3-4bdf-8a39-a01bebede295';
+
+const DEFAULT_QUESTION = 'Voici la photo que je viens de prendre.';
+
+const DEFAULT_INSTRUCTIONS = `Tu es les yeux d'une personne malvoyante ou aveugle. Elle porte une petite caméra et vient de prendre une photo pour savoir ce qu'elle a devant elle. Ta réponse sera lue à voix haute par une voix de synthèse dans ses écouteurs.
+
+Règles de forme :
+- Réponds en français, avec des phrases simples et naturelles, comme si tu parlais à la personne.
+- N'utilise jamais de liste, de titre, d'astérisque, d'emoji, de tableau ni de mise en forme.
+- Écris les dates, heures et sommes comme on les dit à l'oral.
+
+Règles de fond :
+- Commence toujours par l'essentiel. S'il y a un danger ou un obstacle, par exemple une marche, un objet au sol, une voiture ou un feu pour piétons, dis-le en premier.
+- Si la photo montre un document, un courrier, une étiquette, un emballage, un écran ou un panneau : dis d'abord en une phrase de quoi il s'agit, puis lis les informations importantes, comme l'expéditeur, la date, les montants, les échéances ou ce qu'il faut faire. Si le texte est court, lis-le en entier.
+- Si la photo contient des questions, par exemple un exercice, un formulaire ou un quiz, réponds à chacune dans l'ordre.
+- Sinon, décris brièvement ce qu'il y a devant la personne et où se trouvent les choses : à gauche, au centre, à droite, près ou loin.
+- Si la photo est floue, trop sombre ou si le sujet est coupé, dis-le simplement et donne un conseil précis pour la reprendre : se rapprocher, s'éloigner, ajouter de la lumière, tourner vers la gauche ou la droite. N'invente jamais un texte que tu ne peux pas lire : dis clairement quelle partie est illisible.
+- Sois bref : deux à cinq phrases en général, sauf quand un texte doit être lu en entier.`;
+
+const EXTRA_RULES = `
+
+Plusieurs photos :
+- Tu peux recevoir, avant la nouvelle photo, des photos prises juste avant par la même personne, par exemple les pages précédentes d'un même document. Chaque photo est précédée de son numéro.
+- La seule photo à laquelle tu dois répondre est la dernière, celle que la personne vient de prendre.
+- Les photos précédentes servent uniquement de contexte : ne les décris pas, ne lis pas leur texte et ne résume pas leur contenu. Utilise-les seulement si elles aident à comprendre la nouvelle photo, par exemple la suite d'une phrase, une donnée d'un exercice ou ce que la personne est en train de faire.
+- Si la nouvelle photo montre le même document qu'une ancienne, par exemple parce que la personne l'a reprise, traite la nouvelle photo normalement, comme si elle était seule.
+- Si la nouvelle photo est floue, coupée ou illisible, dis-le et conseille de la reprendre : ne lis jamais une ancienne photo à la place.
+
+Demande de la personne :
+- Le texte placé après les photos est la demande de la personne. Quand elle te donne une consigne précise, suis-la en priorité, même si elle s'écarte des règles de fond ci-dessus, par exemple sur la longueur de la réponse ou sur ce qu'il faut lire. Garde toujours les règles de forme, car ta réponse est lue à voix haute.
+
+Découpage en parties :
+- Si ta réponse est longue, par exemple un texte lu en entier ou un exercice avec plusieurs questions, découpe-la en parties de quelques phrases, pour que la personne puisse passer de l'une à l'autre avec les boutons de ses écouteurs.
+- Entre deux parties, écris une ligne qui contient seulement ###.
+- Commence chaque partie par un titre très court, seul sur sa ligne, par exemple « Énoncé » ou « Question 2 », même si d'autres consignes interdisent les titres.
+- Une réponse courte, de cinq phrases ou moins, reste en un seul bloc, sans ### ni titre.`;
+
+// CRC32 standard : même calcul que dans le programme de la carte
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function u32le(b, i) {
+  return (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) >>> 0;
+}
+
+// Réception d'une photo en paquets (même protocole que l'app iPhone).
+// onPhoto(bytes), onFail(message court, phrase à dire), onCommand(code), onSleep(raison), onProgress(fraction)
+function makeReceiver(handlers) {
+  let rx = null;
+  return {
+    get busy() { return rx !== null; },
+    get lastPacketAt() { return rx ? rx.last : 0; },
+    reset() { rx = null; },
+    packet(bytes, now) {
+      if (!bytes || !bytes.length) return;
+      const type = bytes[0];
+      if (type === 0x01) {
+        if (bytes.length < 9) return;
+        const size = u32le(bytes, 1);
+        if (size === 0 || size > 8 * 1024 * 1024) return;
+        rx = { size, crc: u32le(bytes, 5), buf: new Uint8Array(size), got: 0, start: now, last: now };
+        handlers.onProgress && handlers.onProgress(0);
+      } else if (type === 0x02) {
+        if (!rx) return;
+        const n = bytes.length - 1;
+        if (rx.got + n <= rx.size) rx.buf.set(bytes.subarray(1), rx.got);
+        rx.got += n;
+        rx.last = now;
+        handlers.onProgress && handlers.onProgress(Math.min(1, rx.got / rx.size));
+      } else if (type === 0x03) {
+        if (!rx) return;
+        const r = rx;
+        rx = null;
+        if (r.got !== r.size) {
+          handlers.onFail(`Photo incomplète (${r.got} sur ${r.size} octets)`, "La photo n'est pas arrivée en entier. Reprends-la.");
+        } else if (crc32(r.buf) !== r.crc) {
+          handlers.onFail('Photo abîmée pendant le transfert', "La photo a été abîmée pendant l'envoi. Reprends-la.");
+        } else {
+          handlers.onPhoto(r.buf, (now - r.start) / 1000);
+        }
+      } else if (type === 0x04) {
+        if (bytes.length >= 2) handlers.onCommand(bytes[1]);
+      } else if (type === 0x05) {
+        handlers.onSleep(bytes.length >= 2 ? bytes[1] : 0);
+      }
+    },
+    // À appeler régulièrement : abandonne une photo dont l'envoi s'est arrêté en route
+    check(now) {
+      if (rx && now - rx.last > 8000) {
+        const r = rx;
+        rx = null;
+        handlers.onFail(`Photo interrompue (${r.got} sur ${r.size} octets)`, "La photo n'est pas arrivée en entier. Reprends-la.");
+      }
+    }
+  };
+}
+
+function cleanTitle(raw) {
+  return raw.replace(/^[\s#*:.«»"]+|[\s#*:.«»"]+$/g, '');
+}
+
+// Découpe une longue réponse en parties (séparées par ###), avec un titre court pour chacune
+function splitParts(raw) {
+  const chunks = [{ title: '', lines: [] }];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('###')) chunks.push({ title: cleanTitle(trimmed), lines: [] });
+    else chunks[chunks.length - 1].lines.push(trimmed);
+  }
+  const whole = raw.trim();
+  if (chunks.length <= 1) return [{ title: '', text: whole }];
+  const parts = [];
+  for (const chunk of chunks) {
+    const lines = chunk.lines.filter(l => l.length > 0);
+    let title = chunk.title;
+    if (!title && lines.length > 1 && lines[0].length <= 60) title = cleanTitle(lines.shift());
+    const text = lines.join('\n');
+    if (!text && !title) continue;
+    if (!text) parts.push({ title: '', text: title });
+    else parts.push({ title, text });
+  }
+  return parts.length ? parts : [{ title: '', text: whole }];
+}
+
+function cleanForSpeech(text) {
+  return text.replace(/[*#_`•]/g, '').trim();
+}
+
+// Coupe un texte en phrases : après . ! ? … suivi d'un espace (pas dans « 3.5 »), ou à chaque retour à la ligne
+function sentences(text) {
+  const out = [];
+  let cur = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    cur += ch;
+    const end = ch === '\n' || ('.!?…'.includes(ch) && (i + 1 >= text.length || /\s/.test(text[i + 1])));
+    if (end) {
+      if (cur.trim()) out.push(cur);
+      cur = '';
+    }
+  }
+  if (cur.trim()) out.push(cur);
+  return out;
+}
+
+// Regroupe les phrases en morceaux courts (la voix de l'iPhone lit mieux les morceaux courts)
+function speechChunks(text, max = 220) {
+  const clean = cleanForSpeech(text);
+  if (!clean) return [];
+  const out = [];
+  let cur = '';
+  for (const s of sentences(clean)) {
+    if (cur && (cur + s).length > max) { out.push(cur.trim()); cur = ''; }
+    cur += s;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out.filter(s => s.length > 0);
+}
+
+// Le contenu envoyé à Claude (comme l'app iPhone)
+function buildContent(b64, number, previous, question, useMemory) {
+  const image = data => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } });
+  if (!useMemory) return [image(b64), { type: 'text', text: question }];
+  const blocks = [];
+  for (const p of previous) {
+    blocks.push({ type: 'text', text: 'Photo ' + p.number });
+    blocks.push(image(p.b64));
+  }
+  blocks.push({ type: 'text', text: 'Photo ' + number });
+  const fresh = image(b64);
+  fresh.cache_control = { type: 'ephemeral' };
+  blocks.push(fresh);
+  let text = question;
+  if (previous.length) {
+    text = `La photo ${number}, la dernière, est celle que je viens de prendre : réponds uniquement à son sujet. Les autres photos ont été prises juste avant ; elles servent seulement de contexte : ne les décris pas et ne lis pas leur texte.\n\n` + question;
+  }
+  blocks.push({ type: 'text', text });
+  return blocks;
+}
+
+function buildBody(model, system, content) {
+  const body = {
+    model,
+    max_tokens: model.includes('opus') ? 8000 : 4096,
+    system,
+    output_config: { effort: 'medium' },
+    messages: [{ role: 'user', content }]
+  };
+  if (model.includes('haiku')) body.thinking = { type: 'disabled' };
+  else if (model.includes('sonnet')) body.thinking = { type: 'between_tools' };
+  return body;
+}
+
+function answerText(json) {
+  let text = ((json && json.content) || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+  if (text && json.stop_reason === 'max_tokens') text += ' … La réponse a été coupée, car elle était trop longue.';
+  return text;
+}
+
+// La phrase dite à voix haute quand Claude répond par une erreur
+function spokenError(status, message) {
+  const lower = (message || '').toLowerCase();
+  if (status === 0) return "Pas de connexion à Claude. Vérifie le Wi-Fi ou les données mobiles.";
+  if (lower.includes('credit')) return "Le crédit de ton compte Claude est épuisé. Ajoute du crédit dans la console.";
+  if (lower.includes('workspace')) return "La clé de Claude n'est liée à aucun espace de travail. Crée une nouvelle clé liée à un espace de travail.";
+  switch (status) {
+    case 401: return "La clé de Claude est refusée. Vérifie-la dans les réglages.";
+    case 403: return "Accès refusé par Claude. Vérifie les droits de ta clé.";
+    case 413: return "Trop de photos d'un coup. Appuie sur « Oublier les photos précédentes » puis reprends la photo.";
+    case 429: return "Trop de demandes envoyées à Claude. Attends un peu puis réessaie.";
+    case 500: case 503: case 529: return "Claude est surchargé pour le moment. Réessaie dans quelques secondes.";
+    default: return `Erreur de Claude, code ${status}.`;
+  }
+}
+
+function spokenTitle(date, now) {
+  const h = date.getHours(), m = date.getMinutes();
+  let time = (h <= 1 ? `${h} heure` : `${h} heures`) + (m ? ` ${m}` : '');
+  const sameDay = date.toDateString() === now.toDateString();
+  if (sameDay) return `Réponse de ${time}`;
+  const months = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  return `Réponse du ${date.getDate()} ${months[date.getMonth()]}, à ${time}`;
+}
+
+function shownTitle(date) {
+  const p = n => String(n).padStart(2, '0');
+  return `Réponse du ${p(date.getDate())}/${p(date.getMonth() + 1)} à ${p(date.getHours())}h${p(date.getMinutes())}`;
+}
+// PURE-END
+
+// ======================= Page =======================
+const $ = id => document.getElementById(id);
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('cp_' + k); return v === null ? d : v; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('cp_' + k, v); } catch (e) { /* stockage indisponible */ } }
+};
+
+function log(text) {
+  const el = $('log');
+  const t = new Date().toLocaleTimeString('fr-FR');
+  el.textContent = (`${t}  ${text}\n` + el.textContent).slice(0, 6000);
+}
+
+function setStatus(id, text, cls) {
+  const el = $(id);
+  el.textContent = text;
+  el.className = 'status' + (cls ? ' ' + cls : '');
+}
+
+// ---------- Voix ----------
+const Speech = (() => {
+  let voice = null;
+  let gen = 0;
+  const ok = 'speechSynthesis' in window;
+  function pickVoice() {
+    if (!ok) return;
+    const voices = speechSynthesis.getVoices();
+    voice = voices.find(v => v.lang === 'fr-FR' && /premium|enhanced|amélior/i.test(v.name))
+      || voices.find(v => v.lang === 'fr-FR')
+      || voices.find(v => (v.lang || '').toLowerCase().startsWith('fr'))
+      || null;
+  }
+  if (ok) {
+    pickVoice();
+    if (speechSynthesis.addEventListener) speechSynthesis.addEventListener('voiceschanged', pickVoice);
+  }
+  function utter(text) {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'fr-FR';
+    if (voice) u.voice = voice;
+    u.rate = parseFloat(store.get('rate', '1')) || 1;
+    return u;
+  }
+  function stop() {
+    gen++;
+    if (ok) { try { speechSynthesis.cancel(); } catch (e) { /* rien */ } }
+  }
+  // Dit le texte morceau par morceau ; onDone n'est appelé que si la lecture va jusqu'au bout
+  function speak(text, onDone) {
+    stop();
+    if (!ok) { if (onDone) setTimeout(onDone, 0); return; }
+    const my = gen;
+    const list = speechChunks(text);
+    let i = 0;
+    const next = () => {
+      if (my !== gen) return;
+      if (i >= list.length) { if (onDone) onDone(); return; }
+      const u = utter(list[i++]);
+      u.onend = () => setTimeout(next, 0);
+      u.onerror = e => { if (my === gen && e.error !== 'interrupted' && e.error !== 'canceled') setTimeout(next, 0); };
+      speechSynthesis.speak(u);
+    };
+    setTimeout(next, 80);   // laisse à l'iPhone le temps d'arrêter la lecture précédente
+  }
+  // Doit être appelé directement dans un appui : l'iPhone n'autorise la voix qu'après un geste
+  function unlock(text) {
+    if (!ok) return;
+    try { speechSynthesis.cancel(); speechSynthesis.speak(utter(text)); } catch (e) { /* rien */ }
+  }
+  return { speak, stop, unlock, ok };
+})();
+
+// ---------- Bibliothèque et lecteur ----------
+const library = [];   // { id, date, parts:[{title,text}], thumb }
+
+function saveLibrary() {
+  const light = library.slice(-30).map(it => ({ id: it.id, date: it.date.getTime(), parts: it.parts }));
+  store.set('library', JSON.stringify(light));
+}
+
+function loadLibrary() {
+  try {
+    const list = JSON.parse(store.get('library', '[]'));
+    for (const it of list) library.push({ id: it.id, date: new Date(it.date), parts: it.parts, thumb: null });
+  } catch (e) { /* bibliothèque vide */ }
+}
+
+function addToLibrary(parts, blob) {
+  const item = { id: String(Date.now()), date: new Date(), parts, thumb: blob ? URL.createObjectURL(blob) : null };
+  library.push(item);
+  saveLibrary();
+  renderLibrary();
+  return item;
+}
+
+const Player = {
+  item: null, part: 0, state: 'idle',   // 'idle', 'speaking' ou 'paused'
+  play(item, part = 0, withTitle = false) {
+    this.item = item;
+    this.part = Math.max(0, Math.min(part, item.parts.length - 1));
+    this.state = 'speaking';
+    renderAnswer();
+    const p = item.parts[this.part];
+    let text = (p.title ? p.title + '. ' : '') + p.text;
+    if (withTitle) text = spokenTitle(item.date, new Date()) + '. ' + text;
+    const playing = item, index = this.part;
+    Speech.speak(text, () => {
+      if (this.item !== playing || this.part !== index || this.state !== 'speaking') return;
+      if (index + 1 < playing.parts.length) this.play(playing, index + 1);
+      else { this.state = 'idle'; renderAnswer(); }
+    });
+  },
+  togglePlayPause() {
+    if (this.state === 'speaking') { Speech.stop(); this.state = 'paused'; renderAnswer(); return; }
+    if (this.item) this.play(this.item, this.part);
+    else if (library.length) this.play(library[library.length - 1], 0, true);
+    else announce('Aucune réponse pour l\'instant.');
+  },
+  next() {
+    if (!this.item) { this.togglePlayPause(); return; }
+    if (this.part + 1 < this.item.parts.length) { this.play(this.item, this.part + 1); return; }
+    const idx = library.indexOf(this.item);
+    if (idx >= 0 && idx + 1 < library.length) this.play(library[idx + 1], 0, true);
+    else announce('Pas de réponse plus récente.');
+  },
+  previous() {
+    if (!this.item) { this.togglePlayPause(); return; }
+    if (this.part > 0) { this.play(this.item, this.part - 1); return; }
+    const idx = library.indexOf(this.item);
+    if (idx > 0) this.play(library[idx - 1], 0, true);
+    else this.play(this.item, 0);
+  }
+};
+
+// Message court : interrompt la lecture (on peut la reprendre avec Lecture)
+function announce(text) {
+  if (Player.state === 'speaking') Player.state = 'paused';
+  Speech.speak(text);
+}
+
+function renderAnswer() {
+  const box = $('answer');
+  box.textContent = '';
+  const item = Player.item || library[library.length - 1];
+  if (!item) {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'Aucune réponse pour l\'instant. Appuie sur le bouton de la caméra pour prendre une photo.';
+    box.appendChild(p);
+    return;
+  }
+  if (item.thumb) {
+    const img = document.createElement('img');
+    img.className = 'photo';
+    img.src = item.thumb;
+    img.alt = '';
+    box.appendChild(img);
+  }
+  const h = document.createElement('p');
+  h.className = 'status';
+  h.textContent = shownTitle(item.date);
+  box.appendChild(h);
+  item.parts.forEach((part, i) => {
+    const b = document.createElement('button');
+    b.className = 'part' + (Player.item === item && Player.part === i ? ' current' : '');
+    if (part.title) {
+      const s = document.createElement('strong');
+      s.textContent = (item.parts.length > 1 ? (i + 1) + '. ' : '') + part.title;
+      b.appendChild(s);
+    }
+    b.appendChild(document.createTextNode(part.text));
+    b.setAttribute('aria-label', (item.parts.length > 1 ? `Partie ${i + 1} sur ${item.parts.length}. ` : '') + (part.title ? part.title + '. ' : '') + part.text);
+    b.addEventListener('click', () => Player.play(item, i));
+    box.appendChild(b);
+  });
+  $('btnPlay').textContent = Player.state === 'speaking' ? '⏸' : '▶';
+  $('btnPlay').setAttribute('aria-label', Player.state === 'speaking' ? 'Pause' : 'Lecture');
+}
+
+function renderLibrary() {
+  const box = $('library');
+  box.textContent = '';
+  if (!library.length) {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'Les réponses apparaîtront ici, de la plus récente à la plus ancienne.';
+    box.appendChild(p);
+    return;
+  }
+  for (const item of library.slice().reverse()) {
+    const b = document.createElement('button');
+    b.className = 'lib';
+    if (item.thumb) {
+      const img = document.createElement('img');
+      img.src = item.thumb;
+      img.alt = '';
+      b.appendChild(img);
+    } else {
+      const d = document.createElement('div');
+      d.className = 'noimg';
+      b.appendChild(d);
+    }
+    const s = document.createElement('span');
+    const first = item.parts[0];
+    s.textContent = shownTitle(item.date) + ' — ' + (first.title ? first.title + ' : ' : '') + first.text;
+    b.appendChild(s);
+    b.setAttribute('aria-label', spokenTitle(item.date, new Date()) + '. Touchez deux fois pour écouter.');
+    b.addEventListener('click', () => Player.play(item, 0, true));
+    box.appendChild(b);
+  }
+}
+
+// ---------- Mémoire des photos précédentes ----------
+let memory = [];   // [{ number, b64 }]
+
+function memMax() { return parseInt(store.get('memMax', '4'), 10) || 0; }
+
+function forgetPhotos() { memory = []; renderMemory(); }
+
+function remember(number, b64) {
+  const max = memMax();
+  if (max <= 0) { forgetPhotos(); return; }
+  memory.push({ number, b64 });
+  if (memory.length > max) memory = memory.slice(-Math.max(1, Math.floor(max / 2)));
+  renderMemory();
+}
+
+function renderMemory() {
+  const max = memMax();
+  const n = Math.min(memory.length, max);
+  let text;
+  if (max === 0) text = 'Mémoire désactivée dans les réglages : Claude ne reçoit que la nouvelle photo.';
+  else if (n === 0) text = 'Mémoire vide : Claude ne recevra que la nouvelle photo.';
+  else if (n === 1) text = 'Claude recevra aussi la photo précédente, pour le contexte.';
+  else text = `Claude recevra aussi les ${n} photos précédentes, pour le contexte.`;
+  $('memInfo').textContent = text;
+  $('btnForget').disabled = n === 0;
+}
+
+// ---------- Claude ----------
+let analysisGen = 0;
+let pendingBlob = null;
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+async function callClaude(body) {
+  const key = store.get('apiKey', '').trim();
+  if (!key.startsWith('sk-ant-')) {
+    const e = new Error('clé absente'); e.status = -1; throw e;
+  }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 90000);
+  let res;
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal
+    });
+  } catch (err) {
+    const e = new Error(err.name === 'AbortError' ? 'trop long' : 'réseau : ' + err.message);
+    e.status = 0; throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg = (json && json.error && json.error.message) || ('code ' + res.status);
+    const e = new Error(msg); e.status = res.status; throw e;
+  }
+  return json;
+}
+
+async function analyze(blob) {
+  const my = ++analysisGen;
+  pendingBlob = blob;
+  $('btnRetry').hidden = true;
+  setStatus('analysis', 'Claude analyse la photo…');
+  if (store.get('announce', '1') === '1') announce('Photo reçue, analyse en cours.');
+
+  const model = store.get('model', 'claude-sonnet-5-5');
+  const max = memMax();
+  const useMemory = max > 0;
+  const previous = useMemory ? memory.slice(-max) : [];
+  const number = useMemory ? (memory.length ? memory[memory.length - 1].number : 0) + 1 : 1;
+  const question = $('question').value.trim() || DEFAULT_QUESTION;
+  const instructions = store.get('instructions', '').trim() || DEFAULT_INSTRUCTIONS;
+  const start = performance.now();
+  try {
+    const b64 = await blobToBase64(blob);
+    const body = buildBody(model, instructions + EXTRA_RULES, buildContent(b64, number, previous, question, useMemory));
+    const json = await callClaude(body);
+    if (my !== analysisGen) return;
+    const text = answerText(json);
+    if (!text) throw Object.assign(new Error('réponse vide'), { status: -2 });
+    const seconds = ((performance.now() - start) / 1000).toFixed(1);
+    pendingBlob = null;
+    const item = addToLibrary(splitParts(text), blob);
+    remember(number, b64);
+    const ctx = previous.length === 1 ? ', avec la photo précédente pour le contexte'
+      : previous.length > 1 ? `, avec les ${previous.length} photos précédentes pour le contexte` : '';
+    setStatus('analysis', `Réponse en ${seconds} s${ctx}`, 'ok');
+    log(`Claude a répondu en ${seconds} s (${model}, ${previous.length} photo(s) de contexte)`);
+    Player.play(item, 0);
+  } catch (e) {
+    if (my !== analysisGen) return;
+    let spoken;
+    if (e.status === -1) spoken = "La clé de Claude n'est pas renseignée. Ouvre les réglages en bas de la page.";
+    else if (e.status === -2) spoken = "Claude n'a pas donné de réponse. Réessaie.";
+    else spoken = spokenError(e.status, e.message);
+    setStatus('analysis', spoken, 'err');
+    log(`Erreur Claude (${e.status}) : ${e.message}`);
+    $('btnRetry').hidden = false;
+    announce(spoken);
+  }
+}
+
+// ---------- Bluetooth ----------
+let device = null;
+let photoChar = null;
+let connecting = false;
+let wantConnected = false;
+let reconnectTimer = null;
+let disconnectTimer = null;
+let disconnectAnnounced = true;   // pour annoncer aussi la première connexion
+let sleepAnnounced = false;
+
+let lastBar = 0;
+const receiver = makeReceiver({
+  onProgress(f) {
+    const now = performance.now();
+    if (f > 0 && f < 1 && now - lastBar < 120) return;   // pas plus de 8 mises à jour par seconde
+    lastBar = now;
+    const bar = $('progress');
+    bar.hidden = false;
+    bar.value = f;
+  },
+  onPhoto(bytes, seconds) {
+    $('progress').hidden = true;
+    $('bleInfo').textContent = `Dernière photo : ${Math.round(bytes.length / 1024)} Ko reçus en ${seconds.toFixed(1)} s`;
+    log(`Photo reçue : ${bytes.length} octets en ${seconds.toFixed(1)} s`);
+    analyze(new Blob([bytes], { type: 'image/jpeg' }));
+  },
+  onFail(short, spoken) {
+    $('progress').hidden = true;
+    setStatus('bleStatus', short, 'err');
+    log(short);
+    announce(spoken);
+  },
+  onCommand(code) {
+    log('Bouton de la caméra : ' + code);
+    if (code === 1) Player.togglePlayPause();
+    else if (code === 2) Player.next();
+    else if (code === 3) Player.previous();
+    else if (code === 4) { forgetPhotos(); announce('Nouvelle série. Les photos précédentes sont oubliées.'); }
+  },
+  onSleep(reason) {
+    sleepAnnounced = true;
+    log('La caméra se met en veille (raison ' + reason + ')');
+    setStatus('bleStatus', 'Caméra en veille : appuie sur son bouton photo pour la réveiller');
+    const why = reason === 1 ? "La caméra n'a pas servi depuis un moment : elle se met en veille." : 'La caméra se met en veille.';
+    announce(why + ' Pour la réveiller, appuie sur son bouton photo.');
+  }
+});
+
+setInterval(() => receiver.check(performance.now()), 2000);
+
+function onNotification(event) {
+  const v = event.target.value;
+  receiver.packet(new Uint8Array(v.buffer, v.byteOffset, v.byteLength), performance.now());
+}
+
+async function connectGatt() {
+  if (!device || connecting) return;
+  connecting = true;
+  clearTimeout(reconnectTimer);
+  try {
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE);
+    photoChar = await service.getCharacteristic(PHOTO);
+    photoChar.removeEventListener('characteristicvaluechanged', onNotification);
+    photoChar.addEventListener('characteristicvaluechanged', onNotification);
+    await photoChar.startNotifications();
+    try {
+      // Taille des paquets pour les anciens programmes de la carte (180 octets marche partout)
+      const ctrl = await service.getCharacteristic(CTRL);
+      const size = new Uint8Array([180, 0]);
+      if (ctrl.writeValueWithResponse) await ctrl.writeValueWithResponse(size); else await ctrl.writeValue(size);
+    } catch (e) { log('Taille des paquets non envoyée : ' + e.message); }
+    onConnected();
+  } catch (e) {
+    log('Connexion impossible : ' + e.message);
+    if (wantConnected) {
+      if (!sleepAnnounced) setStatus('bleStatus', 'Caméra absente ou en veille : nouvel essai…');
+      reconnectTimer = setTimeout(connectGatt, 3000);
+    }
+  } finally {
+    connecting = false;
+  }
+}
+
+function onConnected() {
+  clearTimeout(disconnectTimer);
+  setStatus('bleStatus', 'Caméra connectée ✓', 'ok');
+  $('btnConnect').textContent = 'Caméra connectée';
+  log('Caméra connectée');
+  if (disconnectAnnounced) announce('Caméra connectée.');
+  disconnectAnnounced = false;
+  sleepAnnounced = false;
+}
+
+function onDisconnected() {
+  receiver.reset();
+  $('progress').hidden = true;
+  $('btnConnect').textContent = 'Se connecter à la caméra';
+  log('Caméra déconnectée');
+  if (sleepAnnounced) {
+    setStatus('bleStatus', 'Caméra en veille : appuie sur son bouton photo pour la réveiller');
+    disconnectAnnounced = true;
+  } else {
+    setStatus('bleStatus', 'Caméra déconnectée, en attente de son retour…', 'err');
+    clearTimeout(disconnectTimer);
+    disconnectTimer = setTimeout(() => {
+      if (device && device.gatt && device.gatt.connected) return;
+      disconnectAnnounced = true;
+      announce('Caméra déconnectée.');
+    }, 4000);
+  }
+  if (wantConnected) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connectGatt, 1500);
+  }
+}
+
+async function onConnectClick() {
+  Speech.unlock('Recherche de la caméra.');   // dans l'appui : autorise la voix pour la suite
+  keepAwake();
+  if (!navigator.bluetooth) {
+    setStatus('bleStatus', "Ce navigateur ne gère pas le Bluetooth : ouvre cette page dans l'app Bluefy.", 'err');
+    return;
+  }
+  if (device && device.gatt && device.gatt.connected) { announce('La caméra est déjà connectée.'); return; }
+  if (!device) {
+    try {
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [SERVICE] }, { name: 'CameraParlante' }],
+        optionalServices: [SERVICE]
+      });
+    } catch (e) {
+      setStatus('bleStatus', 'Aucune caméra choisie. Allume-la, puis réessaie.', 'err');
+      log('Choix annulé : ' + e.message);
+      return;
+    }
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+  }
+  wantConnected = true;
+  setStatus('bleStatus', 'Connexion à la caméra…');
+  connectGatt();
+}
+
+// Garder l'écran allumé (sinon le Bluetooth s'arrête)
+let wakeLock = null;
+async function keepAwake() {
+  try {
+    if (navigator.bluetooth && typeof navigator.bluetooth.setScreenDimEnabled === 'function') navigator.bluetooth.setScreenDimEnabled(false);
+  } catch (e) { /* rien */ }
+  try {
+    if ('wakeLock' in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }
+  } catch (e) { /* rien */ }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
+
+// ---------- Photo prise avec l'iPhone (secours) ----------
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('image illisible'));
+    img.src = url;
+  });
+}
+
+async function phonePhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImage(url);
+    const w = img.naturalWidth, h = img.naturalHeight;
+    const scale = Math.min(1, 2048 / Math.max(w, h));
+    const c = document.createElement('canvas');
+    c.width = Math.round(w * scale);
+    c.height = Math.round(h * scale);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+    log(`Photo de l'iPhone : ${c.width}x${c.height}, ${Math.round(blob.size / 1024)} Ko`);
+    analyze(blob);
+  } catch (e) {
+    announce("La photo de l'iPhone est illisible. Reprends-la.");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// ---------- Réglages ----------
+function initSettings() {
+  $('apiKey').value = store.get('apiKey', '');
+  $('model').value = store.get('model', 'claude-sonnet-5-5');
+  $('rate').value = store.get('rate', '1');
+  $('memMax').value = store.get('memMax', '4');
+  $('announce').checked = store.get('announce', '1') === '1';
+  $('instructions').value = store.get('instructions', '') || DEFAULT_INSTRUCTIONS;
+  $('question').value = store.get('question', '');
+  if (!store.get('apiKey', '')) $('settings').open = true;
+
+  $('apiKey').addEventListener('input', () => store.set('apiKey', $('apiKey').value.trim()));
+  $('model').addEventListener('change', () => store.set('model', $('model').value));
+  $('rate').addEventListener('change', () => store.set('rate', $('rate').value));
+  $('memMax').addEventListener('change', () => { store.set('memMax', $('memMax').value); renderMemory(); });
+  $('announce').addEventListener('change', () => store.set('announce', $('announce').checked ? '1' : '0'));
+  $('question').addEventListener('input', () => store.set('question', $('question').value));
+  $('instructions').addEventListener('change', () => {
+    const v = $('instructions').value.trim();
+    store.set('instructions', v === DEFAULT_INSTRUCTIONS.trim() ? '' : v);
+  });
+  $('btnResetInstr').addEventListener('click', () => {
+    $('instructions').value = DEFAULT_INSTRUCTIONS;
+    store.set('instructions', '');
+  });
+  $('btnVoice').addEventListener('click', () => {
+    store.set('rate', $('rate').value);
+    Speech.unlock('Bonjour. Voici la voix et la vitesse choisies pour lire les réponses.');
+  });
+  $('btnTest').addEventListener('click', async () => {
+    store.set('apiKey', $('apiKey').value.trim());
+    Speech.unlock('Test de Claude.');
+    $('testResult').textContent = 'Test en cours…';
+    try {
+      const json = await callClaude(buildBody('claude-haiku-5-5', 'Réponds en français, en une phrase très courte.',
+        [{ type: 'text', text: 'Dis seulement : Claude est prêt.' }]));
+      const text = answerText(json) || '(réponse vide)';
+      $('testResult').textContent = 'Claude répond : ' + text;
+      announce(text);
+    } catch (e) {
+      const msg = e.status === -1 ? "Colle d'abord ta clé, qui commence par sk-ant-." : spokenError(e.status, e.message);
+      $('testResult').textContent = msg + ' (détail : ' + e.message + ')';
+      log(`Test Claude : erreur ${e.status} : ${e.message}`);
+      announce(msg);
+    }
+  });
+}
+
+// ---------- Démarrage ----------
+$('btnConnect').addEventListener('click', onConnectClick);
+$('btnPhone').addEventListener('click', () => { Speech.unlock('Prends la photo.'); $('phonePhoto').click(); });
+$('phonePhoto').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) phonePhoto(f); });
+$('btnPlay').addEventListener('click', () => Player.togglePlayPause());
+
+// L'iPhone n'autorise la voix qu'après un premier geste : le premier toucher sur la page la débloque
+function primeSpeech() {
+  if (!Speech.ok) return;
+  try { speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (e) { /* rien */ }
+}
+document.addEventListener('touchend', primeSpeech, { once: true, capture: true });
+document.addEventListener('click', primeSpeech, { once: true, capture: true });
+$('btnNext').addEventListener('click', () => Player.next());
+$('btnPrev').addEventListener('click', () => Player.previous());
+$('btnRetry').addEventListener('click', () => { if (pendingBlob) analyze(pendingBlob); });
+$('btnForget').addEventListener('click', () => { forgetPhotos(); announce('Photos précédentes oubliées. La prochaine photo sera analysée seule.'); });
+
+initSettings();
+loadLibrary();
+renderLibrary();
+renderAnswer();
+renderMemory();
+if (!navigator.bluetooth) {
+  setStatus('bleStatus', "Ouvre cette page dans l'app Bluefy pour te connecter à la caméra.", 'err');
+}
+log('Page prête' + (navigator.bluetooth ? ' (Bluetooth disponible)' : ' (pas de Bluetooth ici)'));
+</script>
+</body>
+</html>
