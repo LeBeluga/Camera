@@ -65,6 +65,7 @@ pre#log { white-space:pre-wrap; font-size:12px; max-height:260px; overflow:auto;
     <button id="btnPlay" aria-label="Lecture ou pause">⏯</button>
     <button id="btnNext" aria-label="Suivant">⏭</button>
   </div>
+  <p class="muted">Précédent et suivant passent d'une partie à l'autre et d'une réponse à l'autre, en boucle : avant la première, on revient à la dernière.</p>
 </section>
 
 <section aria-labelledby="t-q">
@@ -77,6 +78,7 @@ pre#log { white-space:pre-wrap; font-size:12px; max-height:260px; overflow:auto;
 <section aria-labelledby="t-lib">
   <h2 id="t-lib">Bibliothèque</h2>
   <div id="library"><p class="muted">Les réponses apparaîtront ici, de la plus récente à la plus ancienne.</p></div>
+  <button id="btnClear" class="secondary">Tout effacer</button>
 </section>
 
 <section>
@@ -489,20 +491,20 @@ const Player = {
     else if (library.length) this.play(library[library.length - 1], 0, true);
     else announce('Aucune réponse pour l\'instant.');
   },
-  next() {
+  // Toutes les pistes (chaque partie de chaque réponse), de la plus ancienne à la plus récente.
+  // Précédent et suivant tournent en boucle : avant la première piste, on revient à la dernière.
+  step(delta) {
     if (!this.item) { this.togglePlayPause(); return; }
-    if (this.part + 1 < this.item.parts.length) { this.play(this.item, this.part + 1); return; }
-    const idx = library.indexOf(this.item);
-    if (idx >= 0 && idx + 1 < library.length) this.play(library[idx + 1], 0, true);
-    else announce('Pas de réponse plus récente.');
+    const list = [];
+    library.forEach(item => item.parts.forEach((p, i) => list.push({ item, part: i })));
+    if (!list.length) { announce('Aucune réponse pour l\'instant.'); return; }
+    let i = list.findIndex(t => t.item === this.item && t.part === this.part);
+    if (i < 0) i = list.length - 1;
+    const t = list[(i + delta + list.length) % list.length];
+    this.play(t.item, t.part, t.item !== this.item);   // nouvelle réponse : on dit d'abord laquelle
   },
-  previous() {
-    if (!this.item) { this.togglePlayPause(); return; }
-    if (this.part > 0) { this.play(this.item, this.part - 1); return; }
-    const idx = library.indexOf(this.item);
-    if (idx > 0) this.play(library[idx - 1], 0, true);
-    else this.play(this.item, 0);
-  }
+  next() { this.step(1); },
+  previous() { this.step(-1); }
 };
 
 // Message court : interrompt la lecture (on peut la reprendre avec Lecture)
@@ -954,6 +956,27 @@ $('btnNext').addEventListener('click', () => Player.next());
 $('btnPrev').addEventListener('click', () => Player.previous());
 $('btnRetry').addEventListener('click', () => { if (pendingBlob) analyze(pendingBlob); });
 $('btnForget').addEventListener('click', () => { forgetPhotos(); announce('Photos précédentes oubliées. La prochaine photo sera analysée seule.'); });
+
+// « Tout effacer » : il faut toucher deux fois (pour ne pas tout perdre par erreur)
+let clearArmed = null;
+$('btnClear').addEventListener('click', () => {
+  if (!clearArmed) {
+    $('btnClear').textContent = 'Touche encore pour tout effacer';
+    clearArmed = setTimeout(() => { clearArmed = null; $('btnClear').textContent = 'Tout effacer'; }, 4000);
+    return;
+  }
+  clearTimeout(clearArmed);
+  clearArmed = null;
+  $('btnClear').textContent = 'Tout effacer';
+  Speech.stop();
+  library.length = 0;
+  Player.item = null; Player.part = 0; Player.state = 'idle';
+  forgetPhotos();
+  saveLibrary();
+  renderLibrary();
+  renderAnswer();
+  announce('Toutes les réponses sont effacées.');
+});
 
 initSettings();
 loadLibrary();
